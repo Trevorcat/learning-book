@@ -1,20 +1,25 @@
 #!/usr/bin/env python3
 """
-Quick Book Mastery Skill 安装脚本
+Quick Book Mastery Skill 安装脚本 (PaddleOCR 3.x + CUDA 12)
 
 自动完成：
 1. 检查并安装 uv（如果未安装）
-2. 创建虚拟环境
-3. 安装所有依赖（包括 PaddleOCR）
-4. 下载 OCR 模型
-5. 验证安装
+2. 创建虚拟环境（Python 3.12）
+3. 安装 PaddlePaddle 3.0 + CUDA 12
+4. 安装 PaddleOCR 3.x
+5. 安装其他依赖
+6. 验证安装
 
 使用方法:
     python install.py
 
 要求:
-    - Python 3.8+
+    - Python 3.8-3.12
     - 网络连接（下载模型和依赖）
+    - NVIDIA GPU + CUDA 12.x（可选，用于加速）
+
+更新日志:
+    v2.0 (2025-03-16): 升级 PaddleOCR 2.x → 3.x, 支持 CUDA 12
 """
 
 import os
@@ -26,16 +31,17 @@ from pathlib import Path
 VENV_NAME = ".venv"
 REQUIRED_PACKAGES = [
     "pdfplumber>=0.10.0",
-    "paddlepaddle>=2.5.0",  # CPU 版本
-    "paddleocr>=2.7.0",
     "pymupdf>=1.23.0",  # fitz，用于 PDF 转图片
     "Pillow>=10.0.0",
 ]
 
-# 可选 GPU 版本（如果有 CUDA）
-GPU_PACKAGES = [
-    "paddlepaddle-gpu>=2.5.0",
-]
+# PaddleOCR 3.x 依赖
+PADDLEOCR_PACKAGE = "paddleocr>=3.0"
+
+# PaddlePaddle 版本配置
+PADDLE_CPU = "paddlepaddle>=3.0"
+PADDLE_GPU = "paddlepaddle-gpu==3.0.0"
+PADDLE_GPU_INDEX = "https://www.paddlepaddle.org.cn/packages/stable/cu126/"
 
 
 def setup_encoding():
@@ -85,24 +91,35 @@ def install_uv():
 def create_venv(skill_dir: Path) -> Path:
     """创建虚拟环境"""
     venv_path = skill_dir / VENV_NAME
-    
+
     if venv_path.exists():
         print(f"📁 虚拟环境已存在: {venv_path}")
         return venv_path
-    
+
     print(f"📁 创建虚拟环境: {venv_path}")
-    
+    print("🐍 使用 Python 3.12 (PaddlePaddle GPU 支持)")
+
     try:
         subprocess.run(
-            ["uv", "venv", str(venv_path)],
+            ["uv", "venv", "-p", "python3.12", str(venv_path)],
             capture_output=True,
             check=True
         )
         print("✅ 虚拟环境创建成功")
         return venv_path
     except subprocess.CalledProcessError as e:
-        print(f"❌ 创建虚拟环境失败: {e}")
-        sys.exit(1)
+        print(f"⚠️ 使用 Python 3.12 失败，尝试默认版本: {e}")
+        try:
+            subprocess.run(
+                ["uv", "venv", str(venv_path)],
+                capture_output=True,
+                check=True
+            )
+            print("✅ 虚拟环境创建成功（默认版本）")
+            return venv_path
+        except subprocess.CalledProcessError as e2:
+            print(f"❌ 创建虚拟环境失败: {e2}")
+            sys.exit(1)
 
 
 def get_venv_python(venv_path: Path) -> Path:
@@ -113,79 +130,87 @@ def get_venv_python(venv_path: Path) -> Path:
         return venv_path / "bin" / "python"
 
 
+def check_cuda() -> bool:
+    """检查是否有可用的 CUDA"""
+    try:
+        result = subprocess.run(
+            ["nvcc", "--version"],
+            capture_output=True,
+            text=True
+        )
+        if result.returncode == 0:
+            # 解析 CUDA 版本
+            for line in result.stdout.split('\n'):
+                if 'release' in line:
+                    print(f"   检测到 CUDA: {line.strip()}")
+                    return True
+        return False
+    except FileNotFoundError:
+        return False
+
+
 def install_packages(venv_path: Path, use_gpu: bool = False):
     """安装依赖包"""
-    print("📦 安装依赖包...")
-    
-    packages = REQUIRED_PACKAGES.copy()
-    
-    # 如果使用 GPU，替换 paddlepaddle 为 paddlepaddle-gpu
-    if use_gpu:
-        packages = [p for p in packages if not p.startswith("paddlepaddle>")]
-        packages.extend(GPU_PACKAGES)
-        print("⚡ 使用 GPU 版本 (CUDA)")
-    
+    print("📦 安装基础依赖包...")
+
+    python_exe = get_venv_python(venv_path)
+
+    # 1. 安装基础依赖
     try:
-        # 使用 uv pip install
-        cmd = ["uv", "pip", "install", "--python", str(get_venv_python(venv_path))] + packages
+        cmd = ["uv", "pip", "install", "--python", str(python_exe)] + REQUIRED_PACKAGES
         subprocess.run(cmd, check=True)
-        print("✅ 依赖包安装成功")
+        print("✅ 基础依赖安装成功")
     except subprocess.CalledProcessError as e:
-        print(f"❌ 安装依赖失败: {e}")
+        print(f"❌ 安装基础依赖失败: {e}")
+        sys.exit(1)
+
+    # 2. 安装 PaddlePaddle
+    print("📦 安装 PaddlePaddle...")
+    if use_gpu:
+        print("⚡ 使用 GPU 版本 (CUDA 12.6)")
+        try:
+            cmd = [
+                "uv", "pip", "install", "--python", str(python_exe),
+                PADDLE_GPU, "-i", PADDLE_GPU_INDEX
+            ]
+            subprocess.run(cmd, check=True)
+            print("✅ PaddlePaddle GPU 安装成功")
+        except subprocess.CalledProcessError as e:
+            print(f"⚠️ GPU 版本安装失败，尝试 CPU 版本: {e}")
+            try:
+                cmd = ["uv", "pip", "install", "--python", str(python_exe), PADDLE_CPU]
+                subprocess.run(cmd, check=True)
+                print("✅ PaddlePaddle CPU 安装成功")
+            except subprocess.CalledProcessError as e2:
+                print(f"❌ PaddlePaddle 安装失败: {e2}")
+                sys.exit(1)
+    else:
+        print("💻 使用 CPU 版本")
+        try:
+            cmd = ["uv", "pip", "install", "--python", str(python_exe), PADDLE_CPU]
+            subprocess.run(cmd, check=True)
+            print("✅ PaddlePaddle CPU 安装成功")
+        except subprocess.CalledProcessError as e:
+            print(f"❌ PaddlePaddle 安装失败: {e}")
+            sys.exit(1)
+
+    # 3. 安装 PaddleOCR 3.x
+    print("📦 安装 PaddleOCR 3.x...")
+    try:
+        cmd = ["uv", "pip", "install", "--python", str(python_exe), PADDLEOCR_PACKAGE]
+        subprocess.run(cmd, check=True)
+        print("✅ PaddleOCR 安装成功")
+    except subprocess.CalledProcessError as e:
+        print(f"❌ PaddleOCR 安装失败: {e}")
         sys.exit(1)
 
 
-def download_ocr_models(venv_path: Path):
-    """预下载 OCR 模型"""
-    print("📥 预下载 OCR 模型（首次使用需要）...")
-    
-    python_exe = get_venv_python(venv_path)
-    
-    # 创建临时脚本来下载模型
-    script = '''
-from paddleocr import PaddleOCR
-import os
-
-# 设置模型下载路径
-os.environ['PADDLE_OCR_HOME'] = os.path.expanduser('~/.paddleocr')
-
-print("正在下载中文 OCR 模型...")
-ocr = PaddleOCR(
-    use_angle_cls=True,
-    lang='ch',
-    show_log=False,
-    use_gpu=False
-)
-print("✅ 中文模型下载完成")
-
-print("正在下载英文 OCR 模型...")
-ocr_en = PaddleOCR(
-    use_angle_cls=True,
-    lang='en',
-    show_log=False,
-    use_gpu=False
-)
-print("✅ 英文模型下载完成")
-'''
-    
-    try:
-        result = subprocess.run(
-            [str(python_exe), "-c", script],
-            capture_output=True,
-            text=True,
-            timeout=300  # 5分钟超时
-        )
-        
-        if result.returncode == 0:
-            print("✅ OCR 模型准备完成")
-        else:
-            print(f"⚠️  模型下载可能未完成，将在首次使用时自动下载")
-            print(f"   错误: {result.stderr[:200]}")
-    except subprocess.TimeoutExpired:
-        print("⚠️  模型下载超时，将在首次使用时自动下载")
-    except Exception as e:
-        print(f"⚠️  模型预下载失败: {e}")
-        print("   将在首次使用时自动下载")
+def download_ocr_models(venv_path: Path, use_gpu: bool = False):
+    """预下载 OCR 模型 (PaddleOCR 3.x)"""
+    print("📥 预下载 OCR 模型（首次使用需要，约 200MB）...")
+    print("   提示: PaddleOCR 3.x 模型将在首次使用时自动下载")
+    print("   跳过预下载，首次运行时会自动获取...")
+    print("✅ 模型配置完成 (将在首次使用时自动下载)")
 
 
 def create_activation_scripts(skill_dir: Path, venv_path: Path):
@@ -239,20 +264,20 @@ fi
     print("✅ 激活脚本已创建")
 
 
-def verify_installation(venv_path: Path) -> bool:
+def verify_installation(venv_path: Path, use_gpu: bool = False) -> bool:
     """验证安装"""
     print("🔍 验证安装...")
-    
+
     python_exe = get_venv_python(venv_path)
-    
+    all_ok = True
+
+    # 1. 检查基础依赖
     checks = [
         ("pdfplumber", "import pdfplumber; print('✅ pdfplumber')"),
         ("PyMuPDF", "import fitz; print('✅ PyMuPDF (fitz)')"),
-        ("PaddleOCR", "from paddleocr import PaddleOCR; print('✅ PaddleOCR')"),
         ("Pillow", "from PIL import Image; print('✅ Pillow')"),
     ]
-    
-    all_ok = True
+
     for name, code in checks:
         try:
             result = subprocess.run(
@@ -269,7 +294,55 @@ def verify_installation(venv_path: Path) -> bool:
         except Exception as e:
             print(f"  ❌ {name} 检查失败: {e}")
             all_ok = False
-    
+
+    # 2. 检查 PaddlePaddle 版本和 GPU 支持
+    print("  📦 PaddlePaddle 信息:")
+    try:
+        paddle_check = f"""
+import paddle
+print(f"   版本: {{paddle.__version__}}")
+print(f"   CUDA 可用: {{paddle.is_compiled_with_cuda()}}")
+if paddle.is_compiled_with_cuda():
+    print(f"   CUDA 版本: {{paddle.version.cuda()}}")
+    print(f"   cuDNN 版本: {{paddle.version.cudnn()}}")
+"""
+        result = subprocess.run(
+            [str(python_exe), "-c", paddle_check],
+            capture_output=True,
+            text=True,
+            timeout=30
+        )
+        if result.returncode == 0:
+            print(result.stdout.strip())
+        else:
+            print(f"   ⚠️ 无法获取 PaddlePaddle 信息: {result.stderr}")
+    except Exception as e:
+        print(f"   ⚠️ PaddlePaddle 检查失败: {e}")
+
+    # 3. 检查 PaddleOCR
+    print("  📦 PaddleOCR 信息:")
+    try:
+        ocr_check = """
+from paddleocr import PaddleOCR
+import paddleocr
+print(f"   版本: {paddleocr.__version__}")
+print("   ✅ PaddleOCR 导入成功")
+"""
+        result = subprocess.run(
+            [str(python_exe), "-c", ocr_check],
+            capture_output=True,
+            text=True,
+            timeout=30
+        )
+        if result.returncode == 0:
+            print(result.stdout.strip())
+        else:
+            print(f"   ❌ PaddleOCR 检查失败: {result.stderr}")
+            all_ok = False
+    except Exception as e:
+        print(f"   ❌ PaddleOCR 检查失败: {e}")
+        all_ok = False
+
     return all_ok
 
 
@@ -340,7 +413,7 @@ def main():
     
     # 7. 验证安装
     print()
-    if verify_installation(venv_path):
+    if verify_installation(venv_path, use_gpu):
         print("\n✅ 所有检查通过！")
     else:
         print("\n⚠️  部分检查未通过，但基本功能应该可用")
