@@ -1,0 +1,11 @@
+{
+  "id": "quick-book-mastery",
+  "name": "Quick Book Mastery",
+  "version": "0.1.0",
+  "minAppVersion": "0.15.0",
+  "description": "通过对话式引导帮助用户快速掌握一本书的核心知识，支持快速模式和伴读模式",
+  "author": "Trevorcat",
+  "authorUrl": "https://github.com/Trevorcat",
+  "fundingUrl": "",
+  "isDesktopOnly": false
+}

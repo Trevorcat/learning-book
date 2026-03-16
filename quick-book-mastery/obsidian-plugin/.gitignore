@@ -1,0 +1,20 @@
+# Obsidian
+*.js
+*.js.map
+node_modules/
+.env
+
+# Build
+data.json
+
+# macOS
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
+
+# npm
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
